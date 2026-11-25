@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react';
-import { ArrowDown, ChartNoAxesCombined, Check, Database, ExternalLink, FileSpreadsheet, LoaderCircle, Table2, Upload } from 'lucide-react';
+import { ArrowDown, ChartNoAxesCombined, Check, Database, ExternalLink, FileSpreadsheet, LoaderCircle, Table2 } from 'lucide-react';
 import { Explorer } from '../io/Explorer';
 import { Analysis } from '../io/Analysis';
 import { levels, sourceUrl, type Book, type Level } from '../io/model';
-import { readLocalWorkbook } from '../io/localWorkbook';
 import '../io/workspace.css';
 
 const tiles = Array.from({length: 70}, (_, i) => (i * 37 + Math.floor(i / 7) * 11) % 9);
@@ -14,34 +13,26 @@ export default function Home() {
   const [tab, setTab] = useState<'explore' | 'analyze'>('explore');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const [origin, setOrigin] = useState('');
   const [revision, setRevision] = useState(0);
-  const upload = useRef<HTMLInputElement>(null);
   const lock = useRef(false);
   const current = levels.find(x => x.id === level)!;
 
-  async function load(file?: File) {
+  async function load() {
     if (lock.current) return;
     lock.current = true;
     setPending(true); setError('');
     try {
-      let data: Book;
-      if (file) {
-        if (!/\.xlsx$/i.test(file.name) || file.size > 30 * 1024 ** 2) throw new Error('30MB 이하의 .xlsx 파일을 선택해 주세요.');
-        data = await readLocalWorkbook(file);
-      } else {
-        const response = await fetch(`${import.meta.env.BASE_URL}data/${level}.json.gz`);
-        if (!response.ok || !response.body) throw new Error('공식 자료를 불러오지 못했어요. 다시 시도하거나 엑셀 원본을 직접 열어 주세요.');
-        // Some static hosts set Content-Encoding: gzip; browsers already decode those responses.
-        const payload = await response.arrayBuffer();
-        const signature = new Uint8Array(payload, 0, Math.min(2, payload.byteLength));
-        data = signature[0] === 0x1f && signature[1] === 0x8b
-          ? await new Response(new Blob([payload]).stream().pipeThrough(new DecompressionStream('gzip'))).json() as Book
-          : JSON.parse(new TextDecoder().decode(payload)) as Book;
-        if (data.level !== level || data.sheets.length !== 12) throw new Error('자료 구성이 맞지 않아요. 엑셀 원본을 직접 열어 주세요.');
-      }
-      setLevel(data.level); setBook(data); setOrigin(file ? '내 엑셀' : '한국은행 · KOSIS'); setRevision(n => n + 1);
-    } catch (err) { setError(file && err instanceof Error ? err.message : '공식 자료를 불러오지 못했어요. 다시 시도하거나 엑셀 원본을 직접 열어 주세요.'); }
+      const response = await fetch(`${import.meta.env.BASE_URL}data/${level}.json.gz`);
+      if (!response.ok || !response.body) throw new Error('Official dataset unavailable');
+      // Some static hosts set Content-Encoding: gzip; browsers already decode those responses.
+      const payload = await response.arrayBuffer();
+      const signature = new Uint8Array(payload, 0, Math.min(2, payload.byteLength));
+      const data = signature[0] === 0x1f && signature[1] === 0x8b
+        ? await new Response(new Blob([payload]).stream().pipeThrough(new DecompressionStream('gzip'))).json() as Book
+        : JSON.parse(new TextDecoder().decode(payload)) as Book;
+      if (data.level !== level || data.sheets.length !== 12) throw new Error('Unexpected dataset structure');
+      setBook(data); setRevision(n => n + 1);
+    } catch { setError('공식 자료를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'); }
     finally { lock.current = false; setPending(false); }
   }
 
@@ -67,12 +58,8 @@ export default function Home() {
           <span className="io-level-label"><span>{x.name}</span><small>{x.count}개 부문</small></span><span className="io-muted">{x.note}</span>
         </label>)}</fieldset>
         <div className="io-actions">
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className="io-primary" disabled={pending} onClick={() => void load()}>{pending ? <LoaderCircle size={17} className="motion-safe:animate-spin" aria-hidden="true"/> : <FileSpreadsheet size={17} aria-hidden="true"/>}{pending ? '자료 불러오는 중…' : '공식 자료 불러오기'}</button>
-            <button type="button" className="io-secondary" disabled={pending} onClick={() => upload.current?.click()}><Upload size={16} aria-hidden="true"/> 내 엑셀 열기</button>
-            <input hidden type="file" accept=".xlsx" aria-label="투입산출표 엑셀 파일" ref={upload} onChange={e => { const file = e.target.files?.[0]; if (file) void load(file); e.target.value = ''; }}/>
-          </div>
-          <span role="status" className="io-status">{pending ? '표를 읽고 있어요.' : book ? <><Check size={16} aria-hidden="true"/>{levels.find(x => x.id === book.level)?.name} · {origin} 불러왔어요</> : '선택: ' + current.name}</span>
+          <button type="button" className="io-primary" disabled={pending} onClick={() => void load()}>{pending ? <LoaderCircle size={17} className="motion-safe:animate-spin" aria-hidden="true"/> : <FileSpreadsheet size={17} aria-hidden="true"/>}{pending ? '자료 불러오는 중…' : '공식 자료 불러오기'}</button>
+          <span role="status" className="io-status">{pending ? '표를 읽고 있어요.' : book ? <><Check size={16} aria-hidden="true"/>{levels.find(x => x.id === book.level)?.name} · 한국은행 자료를 불러왔어요</> : '선택: ' + current.name}</span>
         </div>
         {error && <p role="alert" className="io-error">{error}</p>}
       </section>
@@ -85,7 +72,7 @@ export default function Home() {
       </div>}
       <footer className="io-footer">
         <span>출처: <a href={sourceUrl} target="_blank" rel="noreferrer">한국은행 「산업연관표」, KOSIS 2023년 연장표</a></span>
-        <span>공표 자료를 가공했어요. 직접 연 파일은 전송하거나 저장하지 않아요.</span>
+        <span>공표 자료를 가공했어요.</span>
       </footer>
     </main>
   </div>;
