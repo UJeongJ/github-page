@@ -14,6 +14,7 @@ function Scenario({ book }: { book: Book }) {
   const [order, setOrder] = useState<typeof metrics[number]['key']>('production');
   const [all, setAll] = useState(false);
   const [error, setError] = useState('');
+  const totals = result ? metrics.map(metric => ({ ...metric, value: sum(result.map(row => row[metric.key])) })) : null;
   function calculate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
@@ -38,11 +39,18 @@ function Scenario({ book }: { book: Book }) {
       <div className="mt-4 flex flex-wrap gap-2"><button className="io-secondary" type="button" disabled={shocks.length >= 8} onClick={() => { setResult(null); setShocks(old => [...old, { id: next, code: book.sectors[0].code, amount: '' }]); setNext(next + 1); }}><Plus size={17} aria-hidden="true"/> 산업 추가</button><button className="io-primary" type="submit">파급효과 계산</button></div>
       {error && <p role="alert" className="io-error">{error}</p>}
     </form>
-    {result && <div className="mt-6">
+    {result && totals && <div className="mt-6">
       <h3 className="font-bold" role="status">전 부문 파급효과 합계 <span className="io-muted">(백만원)</span></h3>
-      <div className="io-stats">{metrics.map(m => <div key={m.key}><small>{m.name}</small><strong>{money(sum(result.map(r => r[m.key])))}</strong></div>)}</div>
+      <div className="io-stats">{totals.map(m => <div key={m.key}><small>{m.name}</small><strong>{money(m.value)}</strong></div>)}</div>
       <div className="io-tablebar"><p>부문별 결과 · 변화 절댓값이 큰 순서</p><label className="io-order"><ArrowDownWideNarrow aria-hidden="true" size={17}/><span className="sr-only">정렬 지표</span><select value={order} onChange={e => setOrder(e.target.value as typeof order)}>{metrics.map(m => <option key={m.key} value={m.key}>{m.name}</option>)}</select></label></div>
-      <div className="io-tablewrap" role="region" aria-label="부문별 파급효과 결과" tabIndex={0}><table className="io-table"><caption className="sr-only">부문별 파급효과 · 백만원</caption><thead><tr><th scope="col">산업</th>{metrics.map(m => <th scope="col" key={m.key}>{m.name}</th>)}</tr></thead><tbody>{[...result].sort((a, b) => Math.abs(b[order]) - Math.abs(a[order])).slice(0, all ? undefined : 12).map(r => <tr key={r.code}><th scope="row"><span>{r.code}</span>{r.name}</th>{metrics.map(m => <td key={m.key}>{money(r[m.key])}</td>)}</tr>)}</tbody></table></div>
+      <div className="io-tablewrap" role="region" aria-label="부문별 파급효과 결과" tabIndex={0}>
+        <table className="io-table">
+          <caption className="sr-only">부문별 파급효과 · 백만원</caption>
+          <thead><tr><th scope="col">산업</th>{metrics.map(m => <th scope="col" key={m.key}>{m.name}</th>)}</tr></thead>
+          <tbody>{[...result].sort((a, b) => Math.abs(b[order]) - Math.abs(a[order])).slice(0, all ? undefined : 12).map(r => <tr key={r.code}><th scope="row"><span>{r.code}</span>{r.name}</th>{metrics.map(m => <td key={m.key}>{money(r[m.key])}</td>)}</tr>)}</tbody>
+          <tfoot><tr><th scope="row">전체 부문 합계 <span>(백만원)</span></th>{totals.map(m => <td key={m.key}>{money(m.value)}</td>)}</tr></tfoot>
+        </table>
+      </div>
       <button className="io-secondary mt-3" type="button" onClick={() => setAll(x => !x)}>{all ? '상위 12개만 보기' : `전체 ${result.length}개 산업 보기`}</button>
     </div>}
   </>;
