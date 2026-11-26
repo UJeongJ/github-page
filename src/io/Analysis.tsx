@@ -1,20 +1,46 @@
-import { useState, type FormEvent } from 'react';
-import { ArrowDownWideNarrow, Plus, X } from 'lucide-react';
+import { useMemo, useState, type FormEvent } from 'react';
+import { ArrowDownWideNarrow, BarChart3, Download, FileSpreadsheet, Plus, X } from 'lucide-react';
 import { fmt, includes } from './Explorer';
 import { find, scenario, sum, valueAt, type Book } from './model';
+import './upgrade.css';
 
 type Result = ReturnType<typeof scenario>;
-const metrics = [{ key: 'production', name: '생산 유발액' }, { key: 'valueAdded', name: '부가가치 유발액' }, { key: 'imports', name: '수입 유발액' }] as const;
+const metrics = [
+  { key: 'production', name: '생산 유발액', color: '#244f78' },
+  { key: 'valueAdded', name: '부가가치 유발액', color: '#23836b' },
+  { key: 'imports', name: '수입 유발액', color: '#b87932' },
+] as const;
+type MetricKey = typeof metrics[number]['key'];
 const money = (value: number | null) => fmt(value, '백만원');
+const csvCell = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+
+function downloadScenario(book: Book, result: Result, totals: { key: MetricKey; name: string; value: number }[]) {
+  const header = ['산업코드', '산업명', ...metrics.map(m => `${m.name}(백만원)`)];
+  const rows = result.map(row => [row.code, row.name, row.production, row.valueAdded, row.imports]);
+  rows.push(['합계', '전체 부문 합계', totals[0].value, totals[1].value, totals[2].value] as (string | number)[]);
+  const csv = '\uFEFF' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `산업연관분석_${book.level}_시나리오.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 function Scenario({ book }: { book: Book }) {
   const [shocks, setShocks] = useState([{ id: 0, code: book.sectors[0].code, amount: '1000' }]);
   const [next, setNext] = useState(1);
   const [result, setResult] = useState<Result | null>(null);
-  const [order, setOrder] = useState<typeof metrics[number]['key']>('production');
+  const [order, setOrder] = useState<MetricKey>('production');
   const [all, setAll] = useState(false);
   const [error, setError] = useState('');
   const totals = result ? metrics.map(metric => ({ ...metric, value: sum(result.map(row => row[metric.key])) })) : null;
+  const ranked = useMemo(() => result ? [...result].sort((a, b) => Math.abs(b[order]) - Math.abs(a[order])) : [], [result, order]);
+  const leaders = ranked.slice(0, 5);
+  const maxBar = Math.max(1, ...leaders.map(row => Math.abs(row[order])));
+
   function calculate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
@@ -28,6 +54,11 @@ function Scenario({ book }: { book: Book }) {
       setResult(scenario(book, values)); setError(''); setAll(false);
     } catch (err) { setResult(null); setError(err instanceof Error ? err.message : '계산할 수 없어요.'); }
   }
+
+  const summary = result && totals && leaders.length
+    ? `입력한 최종수요 변화에 따라 전체 산업에서 생산 ${money(totals[0].value)}백만원, 부가가치 ${money(totals[1].value)}백만원, 수입 ${money(totals[2].value)}백만원의 변화가 계산됐습니다. ${order === 'production' ? '생산' : order === 'valueAdded' ? '부가가치' : '수입'} 유발액 기준으로 가장 큰 산업은 ${leaders[0].name}(${leaders[0].code})입니다.`
+    : '';
+
   return <>
     <p className="io-muted">국산 상품별 최종수요의 증감액을 입력하면, 다른 부문까지 이어지는 효과를 계산해요. 수요 감소는 음수로 입력하세요.</p>
     <form className="mt-5" onSubmit={calculate}>
@@ -42,16 +73,32 @@ function Scenario({ book }: { book: Book }) {
     {result && totals && <div className="mt-6">
       <h3 className="font-bold" role="status">전 부문 파급효과 합계 <span className="io-muted">(백만원)</span></h3>
       <div className="io-stats">{totals.map(m => <div key={m.key}><small>{m.name}</small><strong>{money(m.value)}</strong></div>)}</div>
-      <div className="io-tablebar"><p>부문별 결과 · 변화 절댓값이 큰 순서</p><label className="io-order"><ArrowDownWideNarrow aria-hidden="true" size={17}/><span className="sr-only">정렬 지표</span><select value={order} onChange={e => setOrder(e.target.value as typeof order)}>{metrics.map(m => <option key={m.key} value={m.key}>{m.name}</option>)}</select></label></div>
+      <section className="io-upgrade-summary" aria-label="분석 결과 자동 요약">
+        <div className="io-upgrade-summary-title"><BarChart3 size={18} aria-hidden="true"/> 분석 결과 요약</div>
+        <p>{summary}</p>
+        <small>단위: 백만원 · 2023년 생산자가격 · 공표 유발계수 기반 계산</small>
+      </section>
+      <div className="io-upgrade-chart">
+        <div className="io-tablebar"><p className="font-bold">산업별 유발효과 상위 5개</p><label className="io-order"><span className="sr-only">그래프 지표</span><select value={order} onChange={e => setOrder(e.target.value as MetricKey)}>{metrics.map(m => <option key={m.key} value={m.key}>{m.name}</option>)}</select></label></div>
+        {leaders.map((row, index) => <div className="io-bar-row" key={row.code}>
+          <div className="io-bar-label"><span>{index + 1}. {row.name}</span><strong>{money(row[order])}</strong></div>
+          <div className="io-bar-track"><span style={{ width: `${Math.max(0, Math.abs(row[order]) / maxBar * 100)}%`, background: metrics.find(m => m.key === order)?.color }} /></div>
+        </div>)}
+        <p className="io-muted">막대 길이는 선택한 지표의 절댓값을 기준으로 표시합니다.</p>
+      </section>
+      <div className="io-tablebar"><p>부문별 결과 · 변화 절댓값이 큰 순서</p><label className="io-order"><ArrowDownWideNarrow aria-hidden="true" size={17}/><span className="sr-only">정렬 지표</span><select value={order} onChange={e => setOrder(e.target.value as MetricKey)}>{metrics.map(m => <option key={m.key} value={m.key}>{m.name}</option>)}</select></label></div>
       <div className="io-tablewrap" role="region" aria-label="부문별 파급효과 결과" tabIndex={0}>
-        <table className="io-table">
-          <caption className="sr-only">부문별 파급효과 · 백만원</caption>
+        <table className="io-table"><caption className="sr-only">부문별 파급효과 · 백만원</caption>
           <thead><tr><th scope="col">산업</th>{metrics.map(m => <th scope="col" key={m.key}>{m.name}</th>)}</tr></thead>
-          <tbody>{[...result].sort((a, b) => Math.abs(b[order]) - Math.abs(a[order])).slice(0, all ? undefined : 12).map(r => <tr key={r.code}><th scope="row"><span>{r.code}</span>{r.name}</th>{metrics.map(m => <td key={m.key}>{money(r[m.key])}</td>)}</tr>)}</tbody>
+          <tbody>{ranked.slice(0, all ? undefined : 12).map(r => <tr key={r.code}><th scope="row"><span>{r.code}</span>{r.name}</th>{metrics.map(m => <td key={m.key}>{money(r[m.key])}</td>)}</tr>)}</tbody>
           <tfoot><tr><th scope="row">전체 부문 합계 <span>(백만원)</span></th>{totals.map(m => <td key={m.key}>{money(m.value)}</td>)}</tr></tfoot>
         </table>
       </div>
-      <button className="io-secondary mt-3" type="button" onClick={() => setAll(x => !x)}>{all ? '상위 12개만 보기' : `전체 ${result.length}개 산업 보기`}</button>
+      <div className="io-upgrade-actions">
+        <button className="io-secondary" type="button" onClick={() => setAll(x => !x)}>{all ? '상위 12개만 보기' : `전체 ${result.length}개 산업 보기`}</button>
+        <button className="io-primary" type="button" onClick={() => downloadScenario(book, result, totals)}><FileSpreadsheet size={17} aria-hidden="true"/><Download size={15} aria-hidden="true"/> 엑셀용 결과 다운로드</button>
+      </div>
+      <p className="io-muted mt-2">다운로드 파일은 엑셀에서 바로 열 수 있는 CSV(UTF-8) 형식입니다.</p>
     </div>}
   </>;
 }
@@ -83,7 +130,6 @@ function Industry({ book }: { book: Book }) {
     </> : <p className="io-empty">검색한 산업이 없어요. 다른 코드를 입력해 주세요.</p>}
   </>;
 }
-
 const ratio = (n: number | null) => n === null ? null : n * 100;
 export function Analysis({ book }: { book: Book }) {
   const [mode, setMode] = useState<'scenario' | 'industry'>('scenario');
