@@ -41,7 +41,7 @@ type CompareRow = {
   valueAdded: number;
 };
 
-function IndustryCompare({ book }: { book: Book }) {
+export function IndustryCompare({ book }: { book: Book }) {
   const [amount, setAmount] = useState('1000');
   const [order, setOrder] = useState<'production' | 'valueAdded'>('production');
   const [all, setAll] = useState(false);
@@ -67,7 +67,7 @@ function IndustryCompare({ book }: { book: Book }) {
       const productionSheet = book.sheets[6];
       const valueAddedSheet = book.sheets[8];
 
-      const result = book.sectors.map((sector, col): CompareRow => {
+      const result = book.sectors.map((sector): CompareRow => {
         const productionCol = find(productionSheet.cols, sector.code);
         const valueAddedCol = find(valueAddedSheet.cols, sector.code);
 
