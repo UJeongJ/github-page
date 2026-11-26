@@ -615,17 +615,3 @@ export function Analysis({ book }: { book: Book }) {
 }
 
 
-export function Analysis({ book }: { book: Book }) {
-  const [mode, setMode] = useState<'scenario' | 'industry' | 'compare'>('scenario');
-
-  return <section className="io-pad" aria-labelledby="analysis-title">
-    <h2 id="analysis-title" className="io-heading">산업연관 분석</h2>
-    <div className="io-switch">
-      <button type="button" aria-pressed={mode === 'scenario'} onClick={() => setMode('scenario')}>수요 변화 시나리오</button>
-      <button type="button" aria-pressed={mode === 'industry'} onClick={() => setMode('industry')}>산업 구조와 수요 실적</button>
-      <button type="button" aria-pressed={mode === 'compare'} onClick={() => setMode('compare')}>전체 산업 비교</button>
-    </div>
-    {mode === 'scenario' ? <Scenario book={book}/> : mode === 'industry' ? <Industry book={book}/> : <Compare book={book}/>}
-    <p className="io-footnote">한국은행 공표 계수와 실적을 가공한 결과예요. 시나리오는 2023년의 투입 구조와 가격이 유지된다는 가정에 따른 추정이며 예측이나 인과 효과가 아니에요.</p>
-  </section>;
-}
