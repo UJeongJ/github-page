@@ -85,7 +85,7 @@ function Scenario({ book }: { book: Book }) {
           <div className="io-bar-track"><span style={{ width: `${Math.max(0, Math.abs(row[order]) / maxBar * 100)}%`, background: metrics.find(m => m.key === order)?.color }} /></div>
         </div>)}
         <p className="io-muted">막대 길이는 선택한 지표의 절댓값을 기준으로 표시합니다.</p>
-      </section>
+      </div>
       <div className="io-tablebar"><p>부문별 결과 · 변화 절댓값이 큰 순서</p><label className="io-order"><ArrowDownWideNarrow aria-hidden="true" size={17}/><span className="sr-only">정렬 지표</span><select value={order} onChange={e => setOrder(e.target.value as MetricKey)}>{metrics.map(m => <option key={m.key} value={m.key}>{m.name}</option>)}</select></label></div>
       <div className="io-tablewrap" role="region" aria-label="부문별 파급효과 결과" tabIndex={0}>
         <table className="io-table"><caption className="sr-only">부문별 파급효과 · 백만원</caption>
