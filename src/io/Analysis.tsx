@@ -1,7 +1,8 @@
+
 import { useMemo, useState, type FormEvent } from 'react';
 import { ArrowDownWideNarrow, BarChart3, Download, FileSpreadsheet, Plus, X } from 'lucide-react';
 import { fmt, includes } from './Explorer';
-import { find, scenario, sum, valueAt, type Book } from './model';
+import { find, scenario, sum, valueAt, levels, type Book } from './model';
 import './upgrade.css';
 
 type Result = ReturnType<typeof scenario>;
@@ -14,19 +15,231 @@ type MetricKey = typeof metrics[number]['key'];
 const money = (value: number | null) => fmt(value, '백만원');
 const csvCell = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
 
-function downloadScenario(book: Book, result: Result, totals: { key: MetricKey; name: string; value: number }[]) {
-  const header = ['산업코드', '산업명', ...metrics.map(m => `${m.name}(백만원)`)];
-  const rows = result.map(row => [row.code, row.name, row.production, row.valueAdded, row.imports]);
-  rows.push(['합계', '전체 부문 합계', totals[0].value, totals[1].value, totals[2].value] as (string | number)[]);
+function downloadRows(filename: string, header: string[], rows: (string | number)[][]) {
   const csv = '\uFEFF' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `산업연관분석_${book.level}_시나리오.csv`;
+  anchor.download = filename;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadScenario(book: Book, result: Result, totals: { key: MetricKey; name: string; value: number }[]) {
+  const header = ['산업코드', '산업명', ...metrics.map(m => `${m.name}(백만원)`)];
+  const rows = result.map(row => [row.code, row.name, row.production, row.valueAdded, row.imports]);
+  rows.push(['합계', '전체 부문 합계', totals[0].value, totals[1].value, totals[2].value] as (string | number)[]);
+  downloadRows(`산업연관분석_${book.level}_시나리오.csv`, header, rows);
+}
+
+type CompareRow = {
+  code: string;
+  name: string;
+  production: number;
+  valueAdded: number;
+};
+
+function IndustryCompare({ book }: { book: Book }) {
+  const [amount, setAmount] = useState('1000');
+  const [order, setOrder] = useState<'production' | 'valueAdded'>('production');
+  const [all, setAll] = useState(false);
+  const [error, setError] = useState('');
+  const [rows, setRows] = useState<CompareRow[] | null>(null);
+
+  const levelName = levels.find(level => level.id === book.level)?.name ?? book.level;
+  const ranked = useMemo(
+    () => rows ? [...rows].sort((a, b) => b[order] - a[order]) : [],
+    [rows, order]
+  );
+  const leaders = ranked.slice(0, 5);
+  const maxBar = Math.max(1, ...leaders.map(row => Math.abs(row[order])));
+
+  function calculate(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    try {
+      const increase = Number(amount);
+      if (!amount || !Number.isFinite(increase) || increase <= 0 || increase > 1e9) {
+        throw new Error('최종수요 증가액은 0보다 크고 10억 백만원 이내로 입력해 주세요.');
+      }
+
+      const productionSheet = book.sheets[6];
+      const valueAddedSheet = book.sheets[8];
+
+      const result = book.sectors.map((sector, col): CompareRow => {
+        const productionCol = find(productionSheet.cols, sector.code);
+        const valueAddedCol = find(valueAddedSheet.cols, sector.code);
+
+        if (productionCol < 0 || valueAddedCol < 0) {
+          throw new Error(`${sector.name}의 유발계수 열을 찾을 수 없어요.`);
+        }
+
+        let production = 0;
+        let valueAdded = 0;
+
+        for (let row = 0; row < book.sectors.length; row++) {
+          const p = productionSheet.cells[row]?.[productionCol];
+          const v = valueAddedSheet.cells[row]?.[valueAddedCol];
+
+          if (p === null || p === undefined || v === null || v === undefined) {
+            throw new Error(`${sector.name}의 유발계수에 빈 셀이 있어 계산할 수 없어요.`);
+          }
+
+          production += p * increase;
+          valueAdded += v * increase;
+        }
+
+        return {
+          code: sector.code,
+          name: sector.name,
+          production,
+          valueAdded,
+        };
+      });
+
+      setRows(result);
+      setError('');
+      setAll(false);
+    } catch (err) {
+      setRows(null);
+      setError(err instanceof Error ? err.message : '계산할 수 없어요.');
+    }
+  }
+
+  function download() {
+    if (!ranked.length) return;
+    const header = ['순위', '산업코드', '산업명', '생산유발액(백만원)', '부가가치유발액(백만원)'];
+    const data = ranked.map((row, index) => [
+      index + 1, row.code, row.name, row.production, row.valueAdded
+    ]);
+    downloadRows(`전체산업비교_${book.level}.csv`, header, data);
+  }
+
+  return <>
+    <p className="io-muted">
+      현재 불러온 산업 분류의 모든 산업에 동일한 최종수요 증가액을 적용해
+      생산유발효과와 부가가치유발효과를 비교합니다.
+    </p>
+
+    <div className="io-compare-info">
+      <strong>{levelName}</strong>
+      <span>분석 대상 {book.sectors.length}개 산업</span>
+    </div>
+
+    <form className="io-compare-form" onSubmit={calculate}>
+      <label>
+        모든 산업에 적용할 최종수요 증가액 (백만원)
+        <input
+          type="number"
+          min="0.000001"
+          max="1000000000"
+          step="any"
+          required
+          value={amount}
+          onChange={e => setAmount(e.target.value)}
+        />
+      </label>
+      <button className="io-primary" type="submit">
+        <BarChart3 size={17} aria-hidden="true" />
+        전체 산업 비교 실행
+      </button>
+    </form>
+
+    {error && <p role="alert" className="io-error">{error}</p>}
+
+    {rows && <>
+      <section className="io-upgrade-summary" aria-label="전체 산업 비교 결과">
+        <div className="io-upgrade-summary-title">
+          <BarChart3 size={18} aria-hidden="true" />
+          전체 산업 비교 결과
+        </div>
+        <p>
+          {levelName} {rows.length}개 산업에 각각 {money(Number(amount))}백만원의
+          최종수요 증가를 가정했습니다.
+          생산유발효과 1위는 { [...rows].sort((a, b) => b.production - a.production)[0].name },
+          부가가치유발효과 1위는 { [...rows].sort((a, b) => b.valueAdded - a.valueAdded)[0].name }입니다.
+        </p>
+        <small>단위: 백만원 · 2023년 생산자가격 · 공표 유발계수 기반 계산</small>
+      </section>
+
+      <div className="io-compare-section">
+        <h3 className="font-bold">산업별 상위 5개 비교</h3>
+        <label className="io-order">
+          <span className="sr-only">비교 지표</span>
+          <select value={order} onChange={e => setOrder(e.target.value as 'production' | 'valueAdded')}>
+            <option value="production">생산유발효과</option>
+            <option value="valueAdded">부가가치유발효과</option>
+          </select>
+        </label>
+
+        {leaders.map((row, index) => (
+          <div className="io-bar-row" key={row.code}>
+            <div className="io-bar-label">
+              <span>{index + 1}. {row.name}</span>
+              <strong>{money(row[order])}</strong>
+            </div>
+            <div className="io-bar-track">
+              <span style={{
+                width: `${Math.max(0, row[order] / maxBar * 100)}%`,
+                background: order === 'production' ? '#244f78' : '#23836b'
+              }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="io-tablebar">
+        <p>전체 산업 비교 결과 · 높은 순서</p>
+        <label className="io-order">
+          <ArrowDownWideNarrow aria-hidden="true" size={17} />
+          <span className="sr-only">정렬 지표</span>
+          <select value={order} onChange={e => setOrder(e.target.value as 'production' | 'valueAdded')}>
+            <option value="production">생산유발액 순</option>
+            <option value="valueAdded">부가가치유발액 순</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="io-tablewrap" role="region" aria-label="전체 산업 비교표" tabIndex={0}>
+        <table className="io-table">
+          <caption className="sr-only">전체 산업 생산 및 부가가치 유발액 · 백만원</caption>
+          <thead>
+            <tr>
+              <th scope="col">순위</th>
+              <th scope="col">산업</th>
+              <th scope="col">생산유발액</th>
+              <th scope="col">부가가치유발액</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ranked.slice(0, all ? undefined : 12).map((row, index) => (
+              <tr key={row.code}>
+                <td>{index + 1}</td>
+                <th scope="row"><span>{row.code}</span>{row.name}</th>
+                <td>{money(row.production)}</td>
+                <td>{money(row.valueAdded)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="io-upgrade-actions">
+        <button className="io-secondary" type="button" onClick={() => setAll(x => !x)}>
+          {all ? '상위 12개만 보기' : `전체 ${ranked.length}개 산업 보기`}
+        </button>
+        <button className="io-primary" type="button" onClick={download}>
+          <FileSpreadsheet size={17} aria-hidden="true" />
+          <Download size={15} aria-hidden="true" />
+          엑셀용 결과 다운로드
+        </button>
+      </div>
+      <p className="io-muted mt-2">
+        다운로드 파일은 엑셀에서 바로 열 수 있는 CSV(UTF-8) 형식입니다.
+      </p>
+    </>}
+  </>;
 }
 
 function Scenario({ book }: { book: Book }) {
@@ -130,13 +343,20 @@ function Industry({ book }: { book: Book }) {
     </> : <p className="io-empty">검색한 산업이 없어요. 다른 코드를 입력해 주세요.</p>}
   </>;
 }
+
 const ratio = (n: number | null) => n === null ? null : n * 100;
+
 export function Analysis({ book }: { book: Book }) {
-  const [mode, setMode] = useState<'scenario' | 'industry'>('scenario');
+  const [mode, setMode] = useState<'scenario' | 'industry' | 'compare'>('scenario');
+
   return <section className="io-pad" aria-labelledby="analysis-title">
     <h2 id="analysis-title" className="io-heading">산업연관 분석</h2>
-    <div className="io-switch"><button type="button" aria-pressed={mode === 'scenario'} onClick={() => setMode('scenario')}>수요 변화 시나리오</button><button type="button" aria-pressed={mode === 'industry'} onClick={() => setMode('industry')}>산업 구조와 수요 실적</button></div>
-    {mode === 'scenario' ? <Scenario book={book}/> : <Industry book={book}/>}
+    <div className="io-switch">
+      <button type="button" aria-pressed={mode === 'scenario'} onClick={() => setMode('scenario')}>수요 변화 시나리오</button>
+      <button type="button" aria-pressed={mode === 'industry'} onClick={() => setMode('industry')}>산업 구조와 수요 실적</button>
+      <button type="button" aria-pressed={mode === 'compare'} onClick={() => setMode('compare')}>전체 산업 비교</button>
+    </div>
+    {mode === 'scenario' ? <Scenario book={book}/> : mode === 'industry' ? <Industry book={book}/> : <IndustryCompare book={book}/>}
     <p className="io-footnote">한국은행 공표 계수와 실적을 가공한 결과예요. 시나리오는 2023년의 투입 구조와 가격이 유지된다는 가정에 따른 추정이며 예측이나 인과 효과가 아니에요.</p>
   </section>;
 }
